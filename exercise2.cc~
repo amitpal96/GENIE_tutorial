@@ -1,0 +1,309 @@
+
+#include <TTree.h>
+
+using namespace genie;
+
+void read_genie()
+{
+  TH1D *hNuE = new TH1D("hNuE", "", 100, 0, 10.0);
+  TH1D *hNuE_reco = new TH1D("hNuE_reco", "", 100, 0, 10.0);
+  TH2D *hNuE_RecoTrue = new TH2D("hNuE_RecoTrue", "", 100, 0, 10.0, 100, 0, 10.0);
+
+  TH1D *hQEL = new TH1D("hQEL", "", 100, 0, 10.0);
+  TH1D *hDIS = new TH1D("hDIS", "", 100, 0, 10.0);
+  TH1D *hRES = new TH1D("hRES", "", 100, 0, 10.0);
+  TH1D *hMEC = new TH1D("hMEC", "", 100, 0, 10.0);
+  TH1D *hCOH = new TH1D("hCOH", "", 100, 0, 10.0);
+
+  TH1D *hQ2 = new TH1D("hQ2", "", 100, 0, 5.0);
+  TH1D *hq = new TH1D("hq", "", 100, 0, 5.0);
+  TH1D *hMomTrans = new TH1D("hMomTrans", "", 100, 0, 5.0);
+  TH1D *hBjx = new TH1D("hBjx", "", 100, 0, 2);
+  TH1D *hBjy = new TH1D("hBjy", "", 100, 0, 2);
+
+  TH1D *hQEL_xsec = new TH1D("hQEL_xsec", "", 100, 0, 10.0);
+  //Open GHEP/ROOT file
+  TFile *myFile = new TFile("gntp.0.ghep.numu1000060120.root");
+
+  //Get the GENIE GHEP tree and set its branch address
+  TTree *myTree = dynamic_cast<TTree*>(myFile->Get("gtree"));
+  genie::NtpMCEventRecord* myEventRecord = new NtpMCEventRecord();
+  myTree->SetBranchAddress("gmcrec", &myEventRecord);
+  
+  //Number of entries in the tree
+  int nentries = myTree->GetEntries();
+
+  //Loop over event
+  for(int i=0; i<nentries; i++)
+    {
+      //Fetch i'th event
+      myTree->GetEntry(i);
+
+      genie::EventRecord *myEvent = myEventRecord->event;
+
+      const ProcessInfo & proc = myEvent->Summary()->ProcInfo();
+      const Kinematics & kine = myEvent->Summary()->Kine();
+
+      //For interaction info look at Framework/Interaction/ProcessInfo.h
+      bool is_dis = proc.IsDeepInelastic();
+      bool is_res = proc.IsResonant();
+      bool is_qel = proc.IsQuasiElastic();
+      bool is_cohpr = proc.IsCoherentProduction();
+      bool is_mec = proc.IsMEC();
+
+      bool is_cc  = proc.IsWeakCC();
+      bool is_nc = proc.IsWeakNC();
+
+      
+      
+      //Cross-section of the process
+      double xsec_event = myEvent->XSec(); //unit in cm^2
+
+      //Access initial and final state lepton vector
+      GHepParticle * neu = myEvent->Probe();
+      GHepParticle * fsl = myEvent->FinalStatePrimaryLepton();
+      //GHepParticle * nuc = myEvent->HitNucleon();
+
+      //get their corresponding 4-momenta in the LAB frame
+      const TLorentzVector & k1 = *(neu->P4());
+      const TLorentzVector & k2 = *(fsl->P4());
+
+      //int hitnuc_pdg = nuc->Pdg();
+      //double mass_hitn = myEvent->HitNucleon()->Mass();
+      double mass_hitn = 0.93827208;
+      TLorentzVector q = k1 - k2;
+
+      double Q2 = -1*q.M2(); //four momentum transfer
+      double v = q.Energy(); //energy transfer
+      double momTrans = sqrt((q.Z()*q.Z()) + (q.X()*q.X()) + (q.Y()*q.Y()));
+      double x = Q2/(2*mass_hitn*v);
+      double y = v/k1.Energy();
+
+      hQ2->Fill(Q2);
+      hq->Fill(v);
+      hMomTrans->Fill(momTrans);
+      hBjx->Fill(x);
+      hBjy->Fill(y);
+      
+      //Initial lepton
+      double leptonEnergy_i = k1.Energy();
+      int leptonPdg_i = neu->Pdg();
+
+      //Final lepton
+      double leptonEnergy_f = k2.Energy();
+      int leptonPdg_f = fsl->Pdg();
+
+
+      //    if(is_qel) {hQEL_xsec->Fill(leptonEnergy_i, xsec_event/nentries);}
+      
+      TObjArrayIter iter(myEvent);
+      GHepParticle * p = 0;
+
+      double E_p = 0;
+      double M_p = 0;
+      double Energy_nucleon = 0;
+      double E_m = 0;
+
+      //loop over event particles
+      while ((p = dynamic_cast<GHepParticle *>(iter.Next())) != nullptr) {
+
+	int pdgc = p->Pdg();
+	int status = p->Status(); // 0=initial particles, 1=final particles
+	double en = p->P4()->Energy();
+
+	bool isNucleon = (pdgc==2212 || pdgc==2112);
+        bool isLepton = (( abs(pdgc) >= 11) && ( abs(pdgc) <= 16)) ;
+
+	if(status==1)
+          {
+	    if(isNucleon){
+	      Energy_nucleon = Energy_nucleon + (p->P4()->Energy()) - (p->Mass());
+	    }
+	    
+            if(!isNucleon && !isLepton)
+              {
+                E_m = E_m + (p->P4()->Energy());
+              }
+          }
+	
+
+      }
+
+      double E_lep = leptonEnergy_f;
+      double epsilon_n = 0.025; //25 MeV for Carbon target (arXiv:2208.03681)
+      double E_lep_initial_reco = E_lep + Energy_nucleon + epsilon_n + E_m;
+
+      hNuE->Fill(leptonEnergy_i);
+      hNuE_reco->Fill(E_lep_initial_reco);
+
+      hNuE_RecoTrue->Fill(E_lep_initial_reco, leptonEnergy_i);
+      
+      if(is_qel) {hQEL->Fill(leptonEnergy_i);}
+      if(is_dis) {hDIS->Fill(leptonEnergy_i);}
+      if(is_res) {hRES->Fill(leptonEnergy_i);}
+      if(is_cohpr) {hCOH->Fill(leptonEnergy_i);}
+      if(is_mec) {hMEC->Fill(leptonEnergy_i);}
+
+    }
+
+  //cout<<"QEL cross-section: "<<qel_xsec_total/ nQelEvents / nQelEvents * nentries<<endl;
+
+  TCanvas *c1a = new TCanvas("c1a", "", 700, 600);
+  hQ2->SetStats(0);
+  hQ2->SetLineWidth(3);
+  hQ2->GetXaxis()->SetTitle("Four momentum transfer (GeV)");
+  hQ2->GetXaxis()->CenterTitle();
+  hQ2->GetXaxis()->SetTitleOffset(0.85);
+  hQ2->GetXaxis()->SetTitleSize(0.054);
+  hQ2->GetXaxis()->SetLabelSize(0.044);
+  hQ2->GetYaxis()->SetLabelSize(0.044);
+  hQ2->Draw("hist");
+
+  c1a->SaveAs("Q2.png");
+  c1a->SaveAs("Q2.pdf");
+  
+  TCanvas *c1b = new TCanvas("c1b", "", 700, 600);
+  hq->SetStats(0);
+  hq->SetLineWidth(3);
+  hq->GetXaxis()->SetTitle("Energy transfer (GeV)");
+  hq->GetXaxis()->CenterTitle();
+  hq->GetXaxis()->SetTitleOffset(0.85);
+  hq->GetXaxis()->SetTitleSize(0.054);
+  hq->GetXaxis()->SetLabelSize(0.044);
+  hq->GetYaxis()->SetLabelSize(0.044);
+  hq->Draw("hist");
+
+  c1b->SaveAs("EnergyTransfer.png");
+  c1b->SaveAs("EnergyTransfer.pdf");
+
+  TCanvas *c1c = new TCanvas("c1c", "", 700, 600);
+  hMomTrans->SetStats(0);
+  hMomTrans->SetLineWidth(3);
+  hMomTrans->GetXaxis()->SetTitle("Momentum transfer (GeV)");
+  hMomTrans->GetXaxis()->CenterTitle();
+  hMomTrans->GetXaxis()->SetTitleOffset(0.85);
+  hMomTrans->GetXaxis()->SetTitleSize(0.054);
+  hMomTrans->GetXaxis()->SetLabelSize(0.044);
+  hMomTrans->GetYaxis()->SetLabelSize(0.044);
+  hMomTrans->Draw("hist");
+
+  c1c->SaveAs("MomentumTransfer.png");
+  c1c->SaveAs("MomentumTransfer.pdf");
+  
+  TCanvas *c1d = new TCanvas("c1d", "", 700, 600);
+  hBjx->SetStats(0);
+  hBjx->SetLineWidth(3);
+  hBjx->GetXaxis()->SetTitle("Bjorken x");
+  hBjx->GetXaxis()->CenterTitle();
+  hBjx->GetXaxis()->SetTitleOffset(0.85);
+  hBjx->GetXaxis()->SetTitleSize(0.054);
+  hBjx->GetXaxis()->SetLabelSize(0.044);
+  hBjx->GetYaxis()->SetLabelSize(0.044);
+  hBjx->Draw("hist");
+
+  c1d->SaveAs("Bjorkenx.png");
+  c1d->SaveAs("Bjorkenx.pdf");
+  
+  TCanvas *c1e = new TCanvas("c1e", "", 700, 600);
+  hBjy->SetStats(0);
+  hBjy->SetLineWidth(3);
+  hBjy->GetXaxis()->SetTitle("Bjorken y");
+  hBjy->GetXaxis()->CenterTitle();
+  hBjy->GetXaxis()->SetTitleOffset(0.85);
+  hBjy->GetXaxis()->SetTitleSize(0.054);
+  hBjy->GetXaxis()->SetLabelSize(0.044);
+  hBjy->GetYaxis()->SetLabelSize(0.044);
+  hBjy->Draw("hist");
+
+  c1e->SaveAs("Bjorkeny.png");
+  c1e->SaveAs("Bjorkeny.pdf");
+  
+  
+  TCanvas *c2a = new TCanvas("c2a", "", 700, 600);
+  hNuE->SetStats(0);
+  hNuE->GetXaxis()->SetTitle("Neutrino energy (GeV)");
+  hNuE->GetXaxis()->CenterTitle();
+  hNuE->GetXaxis()->SetTitleOffset(0.85);
+  hNuE->GetXaxis()->SetTitleSize(0.054);
+  hNuE->GetXaxis()->SetLabelSize(0.044);
+  hNuE->GetYaxis()->SetLabelSize(0.044);
+  double max2a = 1.2*std::max(hRES->GetMaximum(), hDIS->GetMaximum());
+  hRES->SetMaximum(max2a);
+  hRES->SetLineWidth(4);
+  hRES->SetLineColor(kTeal+10);
+  hQEL->SetLineWidth(4);
+  hQEL->SetLineColor(kGreen-3);
+  hDIS->SetLineWidth(4);
+  hDIS->SetLineColor(kAzure+8);
+  hCOH->SetLineWidth(4);
+  hCOH->SetLineColor(kRed-9);
+  hMEC->SetLineWidth(4);
+  hMEC->SetLineColor(kMagenta-7);
+  hNuE->SetLineWidth(4);
+  hNuE->SetLineColor(kBlack);
+  hNuE->Draw("hist");
+  hRES->Draw("hist same");
+  hQEL->Draw("hist same");
+  hDIS->Draw("hist same");
+  hCOH->Draw("hist same");
+  hMEC->Draw("hist same");
+
+  TLegend* l2a = new TLegend(0.7,0.55,0.85,0.85,"");
+  l2a->AddEntry(hNuE, "Total", "L");
+  l2a->AddEntry(hQEL, "QEL", "L");
+  l2a->AddEntry(hRES, "RES","L");
+  l2a->AddEntry(hDIS, "DIS","L");
+  l2a->AddEntry(hCOH, "COH","L");
+  l2a->AddEntry(hMEC, "MEC","L");
+  l2a->SetTextSize(0.04);
+  l2a->SetTextFont(42);
+  l2a->Draw();
+
+  c2a->SaveAs("InteractionEnergy.png");
+  c2a->SaveAs("InteractionEnergy.pdf");
+  
+  TCanvas *c5 = new TCanvas("c5", "", 700, 600);
+  hNuE->SetStats(0);
+  hNuE->GetXaxis()->SetTitle("Neutrino energy (GeV)");
+  hNuE->GetXaxis()->CenterTitle();
+  hNuE->GetXaxis()->SetTitleOffset(0.85);
+  hNuE->GetXaxis()->SetTitleSize(0.054);
+  hNuE->GetXaxis()->SetLabelSize(0.044);
+  hNuE->GetYaxis()->SetLabelSize(0.044);
+  hNuE->SetLineWidth(4);
+  hNuE->SetLineColor(kBlack);
+  hNuE_reco->SetLineWidth(4);
+  hNuE_reco->SetLineColor(kBlue);
+  hNuE->Draw("hist");
+  hNuE_reco->Draw("hist same");
+
+  TLegend* l5 = new TLegend(0.45,0.75,0.85,0.85,"");
+  l5->AddEntry(hNuE, "True", "L");
+  l5->AddEntry(hNuE_reco, "Reco (calorimetric)", "L");
+  l5->SetTextSize(0.04);
+  l5->SetTextFont(42);
+  l5->Draw();
+
+  c5->SaveAs("RecoVsTrueNeutrinoEnergy.png");
+  c5->SaveAs("RecoVsTrueNeutrinoEnergy.pdf");
+  
+  TCanvas *c6 = new TCanvas("c6", "", 700, 600);
+  c6->SetRightMargin(0.15);
+  hNuE_RecoTrue->SetStats(0);
+  hNuE_RecoTrue->GetXaxis()->SetTitle("Reconstructed energy (GeV)");
+  hNuE_RecoTrue->GetXaxis()->CenterTitle();
+  hNuE_RecoTrue->GetXaxis()->SetTitleOffset(0.85);
+  hNuE_RecoTrue->GetXaxis()->SetTitleSize(0.054);
+  hNuE_RecoTrue->GetYaxis()->SetTitle("True energy (GeV)");
+  hNuE_RecoTrue->GetYaxis()->CenterTitle();
+  hNuE_RecoTrue->GetYaxis()->SetTitleOffset(0.85);
+  hNuE_RecoTrue->GetYaxis()->SetTitleSize(0.054);
+  hNuE_RecoTrue->GetXaxis()->SetLabelSize(0.044);
+  hNuE_RecoTrue->GetYaxis()->SetLabelSize(0.044);
+  hNuE_RecoTrue->SetLineWidth(4);
+  hNuE_RecoTrue->Draw("colz");
+
+  c6->SaveAs("RecoVsTrueNeutrinoEnergy_2d.png");
+  c6->SaveAs("RecoVsTrueNeutrinoEnergy_2d.pdf");
+
+}
