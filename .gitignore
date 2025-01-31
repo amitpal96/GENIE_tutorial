@@ -2,4 +2,5 @@
 *.pdf
 *.png
 *.tar.bz2
+*.root
 GENIE_tutorial/
